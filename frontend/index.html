@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RPG 战斗系统</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <!-- 标题栏 -->
+        <header class="game-header">
+            <h1>⚔️ RPG 战斗系统</h1>
+            <div class="connection-status" id="connectionStatus">
+                <span class="status-dot"></span>
+                <span class="status-text">未连接</span>
+            </div>
+        </header>
+
+        <!-- 主游戏区域 -->
+        <main class="game-main">
+            <!-- 战斗场景 -->
+            <section class="battle-arena">
+                <!-- 敌方区域 -->
+                <div class="team-area enemy-area">
+                    <h2>👹 敌方</h2>
+                    <div class="units-container" id="enemyUnits">
+                        <!-- 动态生成 -->
+                    </div>
+                </div>
+
+                <!-- 分隔线 -->
+                <div class="battle-divider">
+                    <span class="turn-indicator" id="turnIndicator">等待开始...</span>
+                </div>
+
+                <!-- 我方区域 -->
+                <div class="team-area ally-area">
+                    <h2>🛡️ 我方</h2>
+                    <div class="units-container" id="allyUnits">
+                        <!-- 动态生成 -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- 操作面板 -->
+            <section class="action-panel" id="actionPanel">
+                <div class="panel-header">
+                    <span id="actionTitle">准备战斗</span>
+                </div>
+                <div class="panel-content" id="actionContent">
+                    <button class="btn btn-primary btn-large" id="startBattleBtn">
+                        🎮 开始战斗
+                    </button>
+                </div>
+            </section>
+        </main>
+
+        <!-- 战斗日志 -->
+        <aside class="battle-log">
+            <div class="log-header">
+                <h3>📜 战斗日志</h3>
+                <button class="btn btn-small" id="clearLogBtn">清空</button>
+            </div>
+            <div class="log-content" id="battleLog">
+                <p class="log-entry log-system">系统初始化中...</p>
+            </div>
+        </aside>
+
+        <!-- 战斗结束弹窗 -->
+        <div class="modal" id="battleEndModal">
+            <div class="modal-content">
+                <div class="modal-icon" id="modalIcon">🏆</div>
+                <h2 id="modalTitle">战斗结束</h2>
+                <p id="modalMessage">胜利！</p>
+                <button class="btn btn-primary" id="restartBtn">再来一局</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="game.js"></script>
+</body>
+</html>

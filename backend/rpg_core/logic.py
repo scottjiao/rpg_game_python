@@ -63,8 +63,14 @@ class ActionGenerator:
                 continue
             if skill.category != skill_cat:
                 continue
-            if self._can_use_skill(actor, skill):
-                return True
+            
+            # 只要有这个类别的技能，就应该显示这个入口，哪怕当前不可用（比如没蓝、冷却中）
+            # 用户点进去看到灰色的技能，可以知道为什么不能用，体验更好
+            return True
+            
+            # 原来的逻辑：所有技能只要有一个能用才显示入口，否则完全隐藏
+            # if self._can_use_skill(actor, skill):
+            #    return True
         return False
     
     def _can_use_skill(self, actor: CombatEntity, skill: SkillTemplate) -> bool:
@@ -97,8 +103,8 @@ class ActionGenerator:
                     continue
                 if skill.category != SkillCategory.ATTACK:
                     continue
-                if self._can_use_skill(actor, skill):
-                    skills.append(skill)
+                # 不在这里过滤可用性，交给上层处理（标记 is_usable）
+                skills.append(skill)
         
         elif category == ActionCategory.MAGIC:
             for skill_id in actor.known_skill_ids:
@@ -107,8 +113,8 @@ class ActionGenerator:
                     continue
                 if skill.category != SkillCategory.MAGIC:
                     continue
-                if self._can_use_skill(actor, skill):
-                    skills.append(skill)
+                # 不在这里过滤可用性，交给上层处理（标记 is_usable）
+                skills.append(skill)
         
         return skills
     
@@ -198,8 +204,12 @@ class ActionGenerator:
                         target_ids=[target.instance_id]
                     ))
             
-            # 技能
+            # 技能 - AI 使用时需要过滤不可用的技能
             for skill in self.get_available_skills(actor, category, context):
+                # AI 需要检查技能是否真的可用
+                if not self._can_use_skill(actor, skill):
+                    continue
+                    
                 targets = self.get_valid_targets(actor, skill, context)
                 if not targets:
                     continue
