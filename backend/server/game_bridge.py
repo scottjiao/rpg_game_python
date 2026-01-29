@@ -4,18 +4,24 @@ game_bridge.py - 游戏桥接器
 连接 rpg_core 核心逻辑与 WebSocket 网络层。
 - 订阅 EventBus 事件，转换为网络消息发送给前端
 - 管理异步战斗流程
+- 复用 BattleEngine 的逻辑，只负责异步驱动
+
+设计原则（Sans-IO）：
+- BattleEngine 是纯状态机，不涉及任何 IO
+- GameBridge 负责异步驱动、网络通信
+- 战斗规则只在 BattleEngine 中定义一次
 """
 import asyncio
 from typing import Dict, List, Callable, Awaitable, Optional, Any
 
 from rpg_core.enums import TargetType, DamageType, EventType, SkillCategory
-from rpg_core.models import CharacterTemplate, SkillTemplate, CombatEntity, BattleStats, BattleContext, CombatAction
-from rpg_core.events import EventBus, DamageEvent, LogEvent, BattleEndEvent, TurnEvent, BaseEvent
+from rpg_core.models import CharacterTemplate, SkillTemplate, CombatEntity, BattleStats
+from rpg_core.events import EventBus, DamageEvent, LogEvent, TurnEvent, BattleEndEvent, BaseEvent
 from rpg_core.controllers import RandomAIController, BaseController
-from rpg_core.logic import ActionGenerator, DamageCalculator
+from rpg_core.engine import BattleEngine
 
 from .protocol import (
-    ServerMessage, ServerMsgType, ClientMsgType,
+    ServerMsgType, ClientMsgType,
     InitStateData, UnitInfo, DamageData, HealData, TurnStartData, BattleEndData
 )
 from .websocket_controller import WebSocketController
@@ -28,7 +34,8 @@ class GameBridge:
     职责：
     1. 管理战斗状态
     2. 订阅 EventBus，将事件转换为 WebSocket 消息
-    3. 处理前端指令，驱动战斗流程
+    3. 异步驱动 BattleEngine（调用其单步方法）
+    4. 处理前端指令
     """
     
     def __init__(self, send_func: Callable[[dict], Awaitable[None]]):
@@ -40,20 +47,33 @@ class GameBridge:
         self.bus = EventBus()
         self.skill_registry: Dict[str, SkillTemplate] = {}
         
-        # 战斗状态
-        self.allies: List[CombatEntity] = []
-        self.enemies: List[CombatEntity] = []
-        self.entities_map: Dict[str, CombatEntity] = {}
+        # 战斗引擎（复用核心逻辑）
+        self.engine: Optional[BattleEngine] = None
+        
+        # 控制器（由 GameBridge 管理，不传给 Engine）
         self.controllers: Dict[str, BaseController] = {}
         self.ws_controllers: Dict[str, WebSocketController] = {}
         
-        # 战斗控制
-        self.turn_count = 0
-        self.is_battle_over = False
+        # 当前行动单位（用于路由客户端消息）
         self.current_actor: Optional[CombatEntity] = None
         
         # 订阅事件
         self._subscribe_events()
+    
+    @property
+    def allies(self) -> List[CombatEntity]:
+        """获取友方单位列表"""
+        return self.engine.allies if self.engine else []
+    
+    @property
+    def enemies(self) -> List[CombatEntity]:
+        """获取敌方单位列表"""
+        return self.engine.enemies if self.engine else []
+    
+    @property
+    def entities_map(self) -> Dict[str, CombatEntity]:
+        """获取实体映射"""
+        return self.engine.entities_map if self.engine else {}
     
     def _subscribe_events(self):
         """订阅 EventBus 事件"""
@@ -228,29 +248,26 @@ class GameBridge:
         mage = CombatEntity.create(mage_tmpl)
         boss = CombatEntity.create(boss_tmpl)
         
-        self.allies = [hero, mage]
-        self.enemies = [boss]
-        self.entities_map = {e.instance_id: e for e in [hero, mage, boss]}
+        allies = [hero, mage]
+        enemies = [boss]
         
-        # 创建控制器
+        # 创建引擎并初始化
+        self.engine = BattleEngine(self.bus, self.skill_registry)
+        self.engine.initialize(allies=allies, enemies=enemies)
+        
+        # 创建控制器（由 GameBridge 管理）
         # 玩家角色使用 WebSocket 控制器
-        for ally in self.allies:
+        for ally in allies:
             ws_ctrl = WebSocketController(self.skill_registry, self.send, ally.instance_id)
             self.controllers[ally.instance_id] = ws_ctrl
             self.ws_controllers[ally.instance_id] = ws_ctrl
         
         # 敌人使用 AI 控制器
-        for enemy in self.enemies:
+        for enemy in enemies:
             self.controllers[enemy.instance_id] = RandomAIController(self.skill_registry)
-        
-        # 重置状态
-        self.turn_count = 0
-        self.is_battle_over = False
         
         # 发送初始状态
         await self._send_init_state()
-        
-        self.bus.publish(LogEvent(message="战斗初始化完成！"))
     
     async def _send_init_state(self):
         """发送初始状态给前端"""
@@ -287,178 +304,82 @@ class GameBridge:
             "data": InitStateData(
                 allies=allies_info,
                 enemies=enemies_info,
-                turn_number=self.turn_count
+                turn_number=self.engine.turn_count if self.engine else 0
             ).model_dump()
         })
     
     # ==================== 战斗流程 ====================
     
     async def run_battle_loop(self):
-        """主战斗循环（异步版本）"""
-        self.bus.publish(LogEvent(message="--- 战斗开始 ---"))
+        """
+        主战斗循环（异步版本）
         
-        while not self.is_battle_over:
-            self.turn_count += 1
+        复用 BattleEngine 的逻辑，只负责：
+        1. 异步驱动（循环）
+        2. 异步获取玩家输入
+        3. 发送状态更新给前端
+        """
+        if not self.engine:
+            return
+        
+        # 开始战斗
+        self.engine.start_battle()
+        
+        while not self.engine.is_battle_over:
+            self.engine.increment_turn()
             
-            # 速度排序
-            all_units = self.allies + self.enemies
-            active_units = [u for u in all_units if not u.is_dead]
-            active_units.sort(key=lambda u: u.stats.spd, reverse=True)
+            # 复用引擎的排序逻辑
+            units = self.engine.get_turn_order()
             
-            if not active_units:
+            if not units:
                 break
             
-            for unit in active_units:
-                if self.is_battle_over:
+            for unit in units:
+                if self.engine.is_battle_over:
                     break
                 if unit.is_dead:
                     continue
                 
-                await self._process_turn(unit)
+                self.current_actor = unit
                 
-                # 胜负判定
-                if all(u.is_dead for u in self.allies):
-                    self.is_battle_over = True
-                    self.bus.publish(BattleEndEvent(winner_team="ENEMIES"))
-                elif all(u.is_dead for u in self.enemies):
-                    self.is_battle_over = True
-                    self.bus.publish(BattleEndEvent(winner_team="ALLIES"))
+                # 1. 引擎准备：回合开始结算，获取上下文
+                context = self.engine.start_turn(unit)
+                
+                # 2. 获取输入（异步等待！）
+                controller = self.controllers.get(unit.instance_id)
+                if not controller:
+                    continue
+                
+                if isinstance(controller, WebSocketController):
+                    # 等待前端发包
+                    action = await controller.select_action_async(context)
+                else:
+                    # AI 仍然是同步的
+                    action = controller.select_action(context)
+                
+                # 3. 引擎执行（纯计算，即便在异步函数里调用同步函数也是安全的）
+                self.engine.resolve_action(unit, action, context)
+                
+                # 发送 MP 更新（技能消耗后）
+                await self._send_mp_update(unit)
+                
+                # 4. 检查结束
+                if self.engine.check_battle_end():
+                    break
                 
                 # 给前端一点时间处理动画
                 await asyncio.sleep(0.3)
     
-    async def _process_turn(self, actor: CombatEntity):
-        """处理单个回合"""
-        self.current_actor = actor
-        
-        # 1. 发送回合开始事件
-        self.bus.publish(TurnEvent(
-            turn_number=self.turn_count,
-            actor_id=actor.instance_id,
-            actor_name=actor.name
-        ))
-        
-        # 2. 减少冷却
-        for sk_id in list(actor.cooldowns.keys()):
-            if actor.cooldowns[sk_id] > 0:
-                actor.cooldowns[sk_id] -= 1
-        
-        # 3. 构建上下文
-        context = BattleContext(
-            turn_number=self.turn_count,
-            current_actor=actor,
-            allies=self.allies if actor in self.allies else self.enemies,
-            enemies=self.enemies if actor in self.allies else self.allies
-        )
-        
-        # 4. 获取控制器决策
-        controller = self.controllers.get(actor.instance_id)
-        if not controller:
-            self.bus.publish(LogEvent(message=f"Error: No controller for {actor.name}"))
-            return
-        
-        # 根据控制器类型选择同步或异步
-        if isinstance(controller, WebSocketController):
-            action = await controller.select_action_async(context)
-        else:
-            action = controller.select_action(context)
-        
-        # 5. 执行动作
-        await self._execute_action(actor, action, context)
-    
-    async def _execute_action(self, actor: CombatEntity, action: CombatAction, context: BattleContext):
-        """执行动作"""
-        from rpg_core.enums import ActionCategory
-        
-        skill_tmpl = self.skill_registry.get(action.skill_id) if action.skill_id else None
-        
-        # 决定显示名
-        if action.category == ActionCategory.DEFEND:
-            skill_name = "防御"
-        elif skill_tmpl:
-            skill_name = skill_tmpl.name
-        else:
-            skill_name = "普通攻击"
-        
-        self.bus.publish(LogEvent(message=f"{actor.name} 使用了 {skill_name}！"))
-        
-        # 防御处理
-        if action.category == ActionCategory.DEFEND:
-            actor.current_mp = min(actor.stats.max_mp, actor.current_mp + 5)
-            self.bus.publish(LogEvent(message=f"{actor.name} 进行防御，恢复了少量体力。"))
-            return
-        
-        # 扣消耗、设冷却
-        if skill_tmpl:
-            actor.current_mp -= skill_tmpl.cost_mp
-            actor.current_san -= skill_tmpl.cost_san
-            if skill_tmpl.cooldown > 0:
-                actor.cooldowns[skill_tmpl.id] = skill_tmpl.cooldown
-            
-            # 关键修复：扣除MP后，立即发送 MP 更新事件给前台
-            asyncio.create_task(self.send({
-                "type": ServerMsgType.UPDATE_HP.value, # 注意：我偷懒复用了UPDATE_HP消息来更新所有状态
-                "data": {
-                    "unit_id": actor.instance_id,
-                    "current_hp": actor.current_hp,
-                    "max_hp": actor.stats.max_hp,
-                    # 虽然协议里复用了UPDATE_HP的结构，但我们需要确保前端能读到最新的MP
-                    # 实际上我们需要发送一个新的 UPDATE_MP 或者确保前端处理 UPDATE_HP 时也会更新 MP
-                    # 查看 frontend/game.js: handleUpdateHP 只更新了 hp。
-                    # 所以我们需要发送 UPDATE_MP
-                }
-            }))
-            
-            # 发送 MP 更新
-            asyncio.create_task(self.send({
-                "type": ServerMsgType.UPDATE_MP.value,
-                "data": {
-                    "unit_id": actor.instance_id,
-                    "current_mp": actor.current_mp,
-                    "max_mp": actor.stats.max_mp
-                }
-            }))
-        
-        # 遍历目标进行结算
-        for tid in action.target_ids:
-            target = context.get_entity(tid)
-            if not target or target.is_dead:
-                continue
-            
-            result = DamageCalculator.calculate(actor, target, skill_tmpl)
-            
-            if not result["hit"]:
-                self.bus.publish(LogEvent(message=f"MISS! {actor.name} 未命中 {target.name}"))
-                continue
-            
-            if result["type"] == "HEAL":
-                target.current_hp = min(target.stats.max_hp, target.current_hp + result["damage"])
-                self.bus.publish(DamageEvent(
-                    type=EventType.HEAL_DEALT,
-                    source_id=actor.instance_id,
-                    target_id=target.instance_id,
-                    amount=result["damage"],
-                    is_crit=result["is_crit"],
-                    damage_type=result["damage_type"]
-                ))
-            else:
-                target.current_hp = max(0, target.current_hp - result["damage"])
-                if target.current_hp == 0:
-                    target.is_dead = True
-                
-                self.bus.publish(DamageEvent(
-                    source_id=actor.instance_id,
-                    target_id=target.instance_id,
-                    amount=result["damage"],
-                    is_crit=result["is_crit"],
-                    damage_type=result["damage_type"]
-                ))
-                
-                if target.is_dead:
-                    self.bus.publish(BaseEvent(type=EventType.UNIT_DEATH))
-            
-            # 动画间隔
-            await asyncio.sleep(0.2)
+    async def _send_mp_update(self, unit: CombatEntity):
+        """发送 MP 更新给前端"""
+        await self.send({
+            "type": ServerMsgType.UPDATE_MP.value,
+            "data": {
+                "unit_id": unit.instance_id,
+                "current_mp": unit.current_mp,
+                "max_mp": unit.stats.max_mp
+            }
+        })
     
     # ==================== 客户端消息处理 ====================
     

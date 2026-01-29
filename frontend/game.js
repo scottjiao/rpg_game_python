@@ -246,14 +246,17 @@ class GameClient {
         const isVictory = data.winner === 'allies';
         this.ui.showBattleEndModal(isVictory, data.message);
         this.ui.clearActionPanel();
+        this.ui.clearTargetSelection();  // 清理目标选择状态
     }
 
     handleRequestAction(data) {
         this.state.isWaitingForInput = true;
+        this.ui.clearTargetSelection();  // 每次新的行动请求时，清理之前的目标选择状态
         this.ui.showActionSelection(data.actor_name, data.categories);
     }
 
     handleRequestSkill(data) {
+        this.ui.clearTargetSelection();  // 返回技能选择时，清理目标选择状态
         this.ui.showSkillSelection(data.category_name, data.has_basic_attack, data.skills);
     }
 
@@ -561,6 +564,14 @@ class GameUI {
     }
 
     clearTargetSelection() {
+        // 移除所有目标卡片的点击事件监听器
+        document.querySelectorAll('.unit-card[data-target-handler]').forEach(card => {
+            // 克隆节点来移除所有事件监听器
+            const newCard = card.cloneNode(true);
+            newCard.removeAttribute('data-target-handler');
+            card.parentNode.replaceChild(newCard, card);
+        });
+        
         document.querySelectorAll('.unit-card.selectable').forEach(card => {
             card.classList.remove('selectable', 'selected');
         });

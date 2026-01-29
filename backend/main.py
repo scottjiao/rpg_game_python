@@ -1,9 +1,15 @@
-import time
+"""
+main.py - CLI 版本战斗演示
+
+使用同步方式驱动 BattleEngine。
+展示了如何在命令行环境下复用 Sans-IO 设计的战斗引擎。
+"""
 from rpg_core.enums import TargetType, DamageType, EventType, SkillCategory
 from rpg_core.models import CharacterTemplate, SkillTemplate, CombatEntity, BattleStats
 from rpg_core.events import EventBus, DamageEvent, LogEvent, BattleEndEvent
 from rpg_core.controllers import RandomAIController, HumanCLIController
 from rpg_core.engine import BattleEngine
+
 
 # --- 1. 简易 UI (Logger) ---
 class ConsoleUI:
@@ -41,11 +47,11 @@ class ConsoleUI:
         print(f"💚 {src} 治疗了 {tgt} {event.amount} 点生命!")
 
     def on_death(self, event):
-        # 这里的 event 只有 type，为了简化没传谁死了，实际可以传
         print("💀 有单位倒下了！")
 
     def on_end(self, event: BattleEndEvent):
         print(f"\n🏆 战斗结束！获胜方: {event.winner_team}")
+
 
 # --- 2. 数据构造 (Mock JSON loading) ---
 def create_mock_data():
@@ -53,28 +59,28 @@ def create_mock_data():
     skills = [
         SkillTemplate(
             id="fireball", name="火球术",
-            category=SkillCategory.MAGIC,  # 法术
+            category=SkillCategory.MAGIC,
             cost_mp=10, cooldown=0,
             target_type=TargetType.SINGLE_ENEMY, 
             damage_type=DamageType.MAGICAL, power_coef=2.5
         ),
         SkillTemplate(
             id="heal", name="次级治疗",
-            category=SkillCategory.MAGIC,  # 法术
+            category=SkillCategory.MAGIC,
             cost_mp=15, cooldown=2,
             target_type=TargetType.SINGLE_ALLY, 
             damage_type=DamageType.HEAL, power_coef=3.0
         ),
         SkillTemplate(
             id="slash", name="旋风斩",
-            category=SkillCategory.ATTACK,  # 攻击类技能
+            category=SkillCategory.ATTACK,
             cost_mp=20, cooldown=3,
             target_type=TargetType.ALL_ENEMIES, 
             damage_type=DamageType.PHYSICAL, power_coef=0.8
         ),
         SkillTemplate(
             id="power_strike", name="强力攻击",
-            category=SkillCategory.ATTACK,  # 攻击类技能
+            category=SkillCategory.ATTACK,
             cost_mp=5, cooldown=0,
             target_type=TargetType.SINGLE_ENEMY,
             damage_type=DamageType.PHYSICAL, power_coef=1.5
@@ -94,7 +100,55 @@ def create_mock_data():
 
     return skill_registry, hero_tmpl, mage_tmpl, boss_tmpl
 
-# --- 3. Main Entry ---
+
+# --- 3. 战斗驱动（同步版本）---
+def run_cli_battle(engine: BattleEngine, controllers: dict):
+    """
+    CLI 版本的战斗驱动循环
+    
+    这里是"驱动层"，负责：
+    1. 循环控制
+    2. 获取玩家/AI 输入
+    3. 调用引擎的单步方法
+    
+    引擎只负责纯计算，不知道输入来自哪里。
+    """
+    engine.start_battle()
+    
+    while not engine.is_battle_over:
+        engine.increment_turn()
+        
+        # 获取本回合行动顺序
+        units = engine.get_turn_order()
+        
+        if not units:
+            break
+        
+        for unit in units:
+            if engine.is_battle_over:
+                break
+            if unit.is_dead:
+                continue  # 可能在这个回合被之前的人打死了
+            
+            # 1. 引擎准备：回合开始结算，获取上下文
+            context = engine.start_turn(unit)
+            
+            # 2. 获取输入：同步阻塞等待控制器返回动作
+            controller = controllers.get(unit.instance_id)
+            if not controller:
+                print(f"Error: No controller for {unit.name}")
+                continue
+            action = controller.select_action(context)
+            
+            # 3. 引擎执行：纯计算，不涉及 IO
+            engine.resolve_action(unit, action, context)
+            
+            # 4. 检查结束
+            if engine.check_battle_end():
+                break
+
+
+# --- 4. Main Entry ---
 if __name__ == "__main__":
     # 初始化
     bus = EventBus()
@@ -111,19 +165,19 @@ if __name__ == "__main__":
     # 启动 UI 监听
     ui = ConsoleUI(bus, entities_map)
 
-    # 配置 AI  
+    # 配置控制器（驱动层管理，不传给引擎）
     controllers = {
         hero.instance_id: HumanCLIController(skill_registry),
         mage.instance_id: HumanCLIController(skill_registry),
         boss.instance_id: RandomAIController(skill_registry)
     }
 
-    # 启动引擎
+    # 初始化引擎（不再传入 controllers）
     engine = BattleEngine(bus, skill_registry)
     engine.initialize(
         allies=[hero, mage],
-        enemies=[boss],
-        controllers=controllers
+        enemies=[boss]
     )
     
-    engine.run_battle_loop()
+    # 运行战斗（驱动层负责循环）
+    run_cli_battle(engine, controllers)
