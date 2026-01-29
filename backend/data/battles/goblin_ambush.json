@@ -1,0 +1,29 @@
+{
+  "id": "goblin_ambush",
+  "name": "哥布林伏击",
+  "description": "在森林中遭遇一群哥布林！",
+  "allies": [
+    {
+      "character_id": "hero",
+      "controller": "player"
+    },
+    {
+      "character_id": "assassin",
+      "controller": "player"
+    }
+  ],
+  "enemies": [
+    {
+      "character_id": "goblin",
+      "controller": "ai_random"
+    },
+    {
+      "character_id": "goblin",
+      "controller": "ai_random"
+    },
+    {
+      "character_id": "goblin",
+      "controller": "ai_random"
+    }
+  ]
+}

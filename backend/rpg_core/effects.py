@@ -12,8 +12,9 @@ Effect 是附加到实体上的临时效果，可以：
 - 易于序列化和网络传输
 """
 from abc import ABC, abstractmethod
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Protocol, runtime_checkable
 from enum import Enum
+from dataclasses import dataclass, field
 
 if TYPE_CHECKING:
     from .entity import Entity
@@ -30,6 +31,43 @@ class EffectTrigger(str, Enum):
     ON_DEATH = "ON_DEATH"              # 死亡时
 
 
+@runtime_checkable
+class IEffect(Protocol):
+    """
+    效果接口协议 - 定义所有效果必须实现的属性和方法
+    
+    使用 Protocol 实现结构化类型检查（鸭子类型的静态验证）
+    """
+    name: str
+    description: str
+    duration: int
+    is_buff: bool
+    stackable: bool
+    max_stacks: int
+    current_stacks: int
+    source_id: Optional[str]
+    
+    def tick(self) -> None: ...
+    def is_expired(self) -> bool: ...
+    def modify_stat(self, stat_name: str, base_value: float) -> float: ...
+    def modify_damage_dealt(self, damage: float) -> float: ...
+    def modify_damage_received(self, damage: float) -> float: ...
+    def on_turn_start(self, entity: "Entity", context: dict) -> None: ...
+    def on_turn_end(self, entity: "Entity", context: dict) -> None: ...
+
+
+@runtime_checkable
+class ISkipTurnEffect(Protocol):
+    """标记效果会导致跳过回合（如眩晕）"""
+    skip_turn: bool
+
+
+@runtime_checkable
+class IBlockMagicEffect(Protocol):
+    """标记效果会禁用法术（如沉默）"""
+    block_magic: bool
+
+
 class Effect(ABC):
     """
     效果基类
@@ -40,6 +78,16 @@ class Effect(ABC):
     2. 在特定时机触发 (on_turn_start, on_turn_end 等)
     3. 修正属性值 (modify_stat)
     """
+    
+    # 类型注解 - 提高 IDE 智能提示和静态检查
+    name: str
+    description: str
+    duration: int
+    source_id: Optional[str]
+    is_buff: bool
+    stackable: bool
+    max_stacks: int
+    current_stacks: int
     
     def __init__(
         self,
@@ -70,7 +118,7 @@ class Effect(ABC):
         self.max_stacks = max_stacks
         self.current_stacks = 1
     
-    def tick(self):
+    def tick(self) -> None:
         """每回合调用，减少持续时间"""
         if self.duration > 0:
             self.duration -= 1
@@ -177,7 +225,7 @@ class PoisonEffect(Effect):
         self.damage_per_turn = damage_per_turn
     
     def on_turn_start(self, entity: "Entity", context: dict):
-        from .components import ResourceComponent
+        from .components import ResourceComponent, CombatStateComponent
         from .events import LogEvent
         
         res = entity.get(ResourceComponent)
@@ -188,6 +236,13 @@ class PoisonEffect(Effect):
             bus = context.get("bus")
             if bus:
                 bus.publish(LogEvent(message=f"{entity.name} 受到中毒伤害 -{self.damage_per_turn}"))
+            
+            # 检查是否死亡
+            if res.current_hp == 0:
+                state = entity.get(CombatStateComponent)
+                if state:
+                    state.is_dead = True
+                    entity.is_dead = True
 
 
 class BurnEffect(Effect):
@@ -206,7 +261,7 @@ class BurnEffect(Effect):
         self.damage_per_turn = damage_per_turn
     
     def on_turn_start(self, entity: "Entity", context: dict):
-        from .components import ResourceComponent
+        from .components import ResourceComponent, CombatStateComponent
         from .events import LogEvent
         
         res = entity.get(ResourceComponent)
@@ -216,6 +271,13 @@ class BurnEffect(Effect):
             bus = context.get("bus")
             if bus:
                 bus.publish(LogEvent(message=f"{entity.name} 受到燃烧伤害 -{self.damage_per_turn}"))
+            
+            # 检查是否死亡
+            if res.current_hp == 0:
+                state = entity.get(CombatStateComponent)
+                if state:
+                    state.is_dead = True
+                    entity.is_dead = True
 
 
 class RageEffect(Effect):

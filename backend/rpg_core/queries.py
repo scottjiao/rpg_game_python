@@ -10,12 +10,14 @@ queries.py - 属性查询服务
 
 这样可以确保 Buff 系统的修正被正确应用。
 """
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, List
 
 from .components import StatsComponent, EffectsComponent, ResourceComponent
+from .effects import ISkipTurnEffect, IBlockMagicEffect
 
 if TYPE_CHECKING:
     from .entity import Entity
+    from .effects import IEffect
 
 
 class StatQuery:
@@ -198,13 +200,13 @@ class EffectQuery:
         return None
     
     @staticmethod
-    def get_all_effects(entity: "Entity") -> list:
+    def get_all_effects(entity: "Entity") -> List["IEffect"]:
         """获取所有效果"""
         effects_comp = entity.get(EffectsComponent)
         return effects_comp.effects if effects_comp else []
     
     @staticmethod
-    def get_buffs(entity: "Entity") -> list:
+    def get_buffs(entity: "Entity") -> List["IEffect"]:
         """获取所有增益效果"""
         effects_comp = entity.get(EffectsComponent)
         if not effects_comp:
@@ -212,7 +214,7 @@ class EffectQuery:
         return [e for e in effects_comp.effects if e.is_buff]
     
     @staticmethod
-    def get_debuffs(entity: "Entity") -> list:
+    def get_debuffs(entity: "Entity") -> List["IEffect"]:
         """获取所有减益效果"""
         effects_comp = entity.get(EffectsComponent)
         if not effects_comp:
@@ -225,7 +227,11 @@ class EffectQuery:
         effects_comp = entity.get(EffectsComponent)
         if not effects_comp:
             return False
-        return any(getattr(e, 'skip_turn', False) for e in effects_comp.effects)
+        # 使用 Protocol 进行类型安全的检查
+        return any(
+            isinstance(e, ISkipTurnEffect) and e.skip_turn 
+            for e in effects_comp.effects
+        )
     
     @staticmethod
     def is_silenced(entity: "Entity") -> bool:
@@ -233,4 +239,8 @@ class EffectQuery:
         effects_comp = entity.get(EffectsComponent)
         if not effects_comp:
             return False
-        return any(getattr(e, 'block_magic', False) for e in effects_comp.effects)
+        # 使用 Protocol 进行类型安全的检查
+        return any(
+            isinstance(e, IBlockMagicEffect) and e.block_magic 
+            for e in effects_comp.effects
+        )

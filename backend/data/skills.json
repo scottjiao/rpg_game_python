@@ -1,0 +1,167 @@
+{
+  "fireball": {
+    "name": "火球术",
+    "description": "向敌人投掷一颗炽热的火球",
+    "category": "MAGIC",
+    "cost_mp": 10,
+    "cost_san": 0,
+    "cooldown": 0,
+    "target_type": "SINGLE_ENEMY",
+    "damage_type": "MAGICAL",
+    "power_coef": 2.5,
+    "fixed_value": 0,
+    "effect_ids": []
+  },
+  "heal": {
+    "name": "次级治疗",
+    "description": "恢复单个友方单位的生命值",
+    "category": "MAGIC",
+    "cost_mp": 40,
+    "cost_san": 0,
+    "cooldown": 2,
+    "target_type": "SINGLE_ALLY",
+    "damage_type": "HEAL",
+    "power_coef": 3.0,
+    "fixed_value": 0,
+    "effect_ids": []
+  },
+  "slash": {
+    "name": "旋风斩",
+    "description": "挥舞武器攻击所有敌人",
+    "category": "ATTACK",
+    "cost_mp": 20,
+    "cost_san": 0,
+    "cooldown": 3,
+    "target_type": "ALL_ENEMIES",
+    "damage_type": "PHYSICAL",
+    "power_coef": 0.8,
+    "fixed_value": 0,
+    "effect_ids": []
+  },
+  "power_strike": {
+    "name": "强力攻击",
+    "description": "蓄力后发动的重击",
+    "category": "ATTACK",
+    "cost_mp": 5,
+    "cost_san": 0,
+    "cooldown": 0,
+    "target_type": "SINGLE_ENEMY",
+    "damage_type": "PHYSICAL",
+    "power_coef": 1.5,
+    "fixed_value": 0,
+    "effect_ids": []
+  },
+  "poison_blade": {
+    "name": "毒刃",
+    "description": "涂有剧毒的攻击，使目标中毒",
+    "category": "ATTACK",
+    "cost_mp": 15,
+    "cost_san": 0,
+    "cooldown": 2,
+    "target_type": "SINGLE_ENEMY",
+    "damage_type": "PHYSICAL",
+    "power_coef": 1.2,
+    "fixed_value": 0,
+    "effect_ids": ["apply_poison"],
+    "effect_params": {
+      "apply_poison": {
+        "duration": 3,
+        "damage_per_turn": 10
+      }
+    }
+  },
+  "fire_storm": {
+    "name": "火焰风暴",
+    "description": "召唤火焰风暴灼烧所有敌人",
+    "category": "MAGIC",
+    "cost_mp": 35,
+    "cost_san": 0,
+    "cooldown": 4,
+    "target_type": "ALL_ENEMIES",
+    "damage_type": "MAGICAL",
+    "power_coef": 1.8,
+    "fixed_value": 0,
+    "effect_ids": ["apply_burn"],
+    "effect_params": {
+      "apply_burn": {
+        "duration": 2,
+        "damage_per_turn": 15
+      }
+    }
+  },
+  "rage": {
+    "name": "狂暴",
+    "description": "进入狂暴状态，大幅提升攻击力",
+    "category": "SPECIAL",
+    "cost_mp": 10,
+    "cost_san": 5,
+    "cooldown": 5,
+    "target_type": "SELF",
+    "damage_type": "PHYSICAL",
+    "power_coef": 0,
+    "fixed_value": 0,
+    "effect_ids": ["apply_rage"],
+    "effect_params": {
+      "apply_rage": {
+        "duration": 3,
+        "atk_bonus": 0.5
+      }
+    }
+  },
+  "shield": {
+    "name": "护盾",
+    "description": "为自己或友方提供防御强化",
+    "category": "MAGIC",
+    "cost_mp": 20,
+    "cost_san": 0,
+    "cooldown": 3,
+    "target_type": "SINGLE_ALLY",
+    "damage_type": "HEAL",
+    "power_coef": 0,
+    "fixed_value": 0,
+    "effect_ids": ["apply_defense_up"],
+    "effect_params": {
+      "apply_defense_up": {
+        "duration": 2,
+        "def_bonus": 0.5
+      }
+    }
+  },
+  "vampiric_strike": {
+    "name": "吸血打击",
+    "description": "吸取敌人生命力恢复自身",
+    "category": "ATTACK",
+    "cost_mp": 20,
+    "cost_san": 0,
+    "cooldown": 2,
+    "target_type": "SINGLE_ENEMY",
+    "damage_type": "PHYSICAL",
+    "power_coef": 1.0,
+    "fixed_value": 0,
+    "effect_ids": ["lifesteal"],
+    "effect_params": {
+      "lifesteal": {
+        "percent": 0.3
+      }
+    }
+  },
+  "regen": {
+    "name": "再生术",
+    "description": "持续恢复目标生命值",
+    "category": "MAGIC",
+    "cost_mp": 25,
+    "cost_san": 0,
+    "cooldown": 4,
+    "target_type": "SINGLE_ALLY",
+    "damage_type": "HEAL",
+    "power_coef": 0,
+    "fixed_value": 0,
+    "effect_ids": ["apply_regen"],
+    "effect_params": {
+      "apply_regen": {
+        "duration": 3,
+        "heal_per_turn": 20
+      }
+    }
+  }
+}

@@ -13,11 +13,13 @@ from pydantic import BaseModel
 class ServerMsgType(str, Enum):
     """服务器 -> 客户端 的消息类型"""
     # 初始化
+    BATTLE_LIST = "BATTLE_LIST"         # 返回可用战斗列表
     INIT_STATE = "INIT_STATE"           # 战斗开始时发送完整状态
     
     # 状态更新
     UPDATE_HP = "UPDATE_HP"             # HP 变化
     UPDATE_MP = "UPDATE_MP"             # MP 变化
+    UPDATE_EFFECTS = "UPDATE_EFFECTS"   # Buff/Debuff 状态变化
     UNIT_DIED = "UNIT_DIED"             # 单位死亡
     
     # 事件通知
@@ -25,7 +27,10 @@ class ServerMsgType(str, Enum):
     TURN_START = "TURN_START"           # 回合开始
     DAMAGE = "DAMAGE"                   # 伤害事件
     HEAL = "HEAL"                       # 治疗事件
+    EFFECT_APPLIED = "EFFECT_APPLIED"   # 效果施加事件
+    EFFECT_REMOVED = "EFFECT_REMOVED"   # 效果移除事件
     BATTLE_END = "BATTLE_END"           # 战斗结束
+    RETURN_TO_MENU = "RETURN_TO_MENU"   # 返回主菜单确认
     
     # 请求玩家操作
     REQUEST_ACTION = "REQUEST_ACTION"   # 请求玩家选择动作
@@ -35,14 +40,26 @@ class ServerMsgType(str, Enum):
 
 class ClientMsgType(str, Enum):
     """客户端 -> 服务器 的消息类型"""
+    GET_BATTLES = "GET_BATTLES"         # 获取可用战斗列表
     START_BATTLE = "START_BATTLE"       # 开始战斗
     SELECT_CATEGORY = "SELECT_CATEGORY" # 选择行动类型
     SELECT_SKILL = "SELECT_SKILL"       # 选择技能
     SELECT_TARGET = "SELECT_TARGET"     # 选择目标
     RESTART = "RESTART"                 # 重新开始
+    RETURN_TO_MENU = "RETURN_TO_MENU"   # 返回主菜单
 
 
 # ==================== 数据结构 ====================
+
+class EffectInfo(BaseModel):
+    """效果信息（用于前端显示 Buff/Debuff）"""
+    name: str
+    description: str
+    duration: int
+    is_buff: bool
+    stacks: int = 1
+    icon: str = ""  # 可选图标标识
+
 
 class UnitInfo(BaseModel):
     """单位信息（用于初始化和状态展示）"""
@@ -54,6 +71,7 @@ class UnitInfo(BaseModel):
     max_mp: int
     is_dead: bool = False
     team: str  # "ally" or "enemy"
+    effects: List[EffectInfo] = []  # 当前生效的 Buff/Debuff
 
 
 class SkillInfo(BaseModel):
@@ -158,6 +176,26 @@ class BattleEndData(BaseModel):
     """战斗结束数据"""
     winner: str  # "allies" or "enemies"
     message: str
+
+
+class EffectAppliedData(BaseModel):
+    """效果施加事件数据"""
+    unit_id: str
+    unit_name: str
+    effect: EffectInfo
+
+
+class EffectRemovedData(BaseModel):
+    """效果移除事件数据"""
+    unit_id: str
+    unit_name: str
+    effect_name: str
+
+
+class UpdateEffectsData(BaseModel):
+    """效果状态更新数据（完整同步）"""
+    unit_id: str
+    effects: List[EffectInfo]
 
 
 # ==================== 客户端消息 ====================

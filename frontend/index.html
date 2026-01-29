@@ -11,14 +11,29 @@
         <!-- 标题栏 -->
         <header class="game-header">
             <h1>⚔️ RPG 战斗系统</h1>
-            <div class="connection-status" id="connectionStatus">
-                <span class="status-dot"></span>
-                <span class="status-text">未连接</span>
+            <div class="header-right">
+                <button class="btn btn-small btn-secondary" id="returnMenuBtn" style="display: none;">
+                    🏠 返回主菜单
+                </button>
+                <div class="connection-status" id="connectionStatus">
+                    <span class="status-dot"></span>
+                    <span class="status-text">未连接</span>
+                </div>
             </div>
         </header>
 
+        <!-- 主菜单（战斗选择） -->
+        <section class="main-menu" id="mainMenu">
+            <div class="menu-container">
+                <h2>🗡️ 选择战斗</h2>
+                <div class="battle-list" id="battleList">
+                    <p class="loading-text">加载中...</p>
+                </div>
+            </div>
+        </section>
+
         <!-- 主游戏区域 -->
-        <main class="game-main">
+        <main class="game-main" id="gameMain" style="display: none;">
             <!-- 战斗场景 -->
             <section class="battle-arena">
                 <!-- 敌方区域 -->
@@ -49,9 +64,7 @@
                     <span id="actionTitle">准备战斗</span>
                 </div>
                 <div class="panel-content" id="actionContent">
-                    <button class="btn btn-primary btn-large" id="startBattleBtn">
-                        🎮 开始战斗
-                    </button>
+                    <p style="color: var(--text-secondary);">等待战斗开始...</p>
                 </div>
             </section>
         </main>
@@ -73,7 +86,10 @@
                 <div class="modal-icon" id="modalIcon">🏆</div>
                 <h2 id="modalTitle">战斗结束</h2>
                 <p id="modalMessage">胜利！</p>
-                <button class="btn btn-primary" id="restartBtn">再来一局</button>
+                <div class="modal-buttons">
+                    <button class="btn btn-primary" id="restartBtn">🔄 再来一局</button>
+                    <button class="btn btn-secondary" id="backToMenuBtn">🏠 返回主菜单</button>
+                </div>
             </div>
         </div>
     </div>

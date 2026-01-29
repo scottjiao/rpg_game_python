@@ -1,0 +1,21 @@
+{
+  "id": "tutorial",
+  "name": "新手教程战",
+  "description": "击败恶龙！",
+  "allies": [
+    {
+      "character_id": "hero",
+      "controller": "player"
+    },
+    {
+      "character_id": "mage",
+      "controller": "player"
+    }
+  ],
+  "enemies": [
+    {
+      "character_id": "dragon",
+      "controller": "ai_random"
+    }
+  ]
+}

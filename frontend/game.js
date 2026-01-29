@@ -9,26 +9,33 @@
 
 // ==================== 消息类型常量 ====================
 const ServerMsgType = {
+    BATTLE_LIST: "BATTLE_LIST",
     INIT_STATE: "INIT_STATE",
     UPDATE_HP: "UPDATE_HP",
     UPDATE_MP: "UPDATE_MP",
+    UPDATE_EFFECTS: "UPDATE_EFFECTS",
     UNIT_DIED: "UNIT_DIED",
     LOG: "LOG",
     TURN_START: "TURN_START",
     DAMAGE: "DAMAGE",
     HEAL: "HEAL",
+    EFFECT_APPLIED: "EFFECT_APPLIED",
+    EFFECT_REMOVED: "EFFECT_REMOVED",
     BATTLE_END: "BATTLE_END",
+    RETURN_TO_MENU: "RETURN_TO_MENU",
     REQUEST_ACTION: "REQUEST_ACTION",
     REQUEST_SKILL: "REQUEST_SKILL",
     REQUEST_TARGET: "REQUEST_TARGET"
 };
 
 const ClientMsgType = {
+    GET_BATTLES: "GET_BATTLES",
     START_BATTLE: "START_BATTLE",
     SELECT_CATEGORY: "SELECT_CATEGORY",
     SELECT_SKILL: "SELECT_SKILL",
     SELECT_TARGET: "SELECT_TARGET",
-    RESTART: "RESTART"
+    RESTART: "RESTART",
+    RETURN_TO_MENU: "RETURN_TO_MENU"
 };
 
 // ==================== 游戏状态 ====================
@@ -44,6 +51,8 @@ class GameState {
         this.selectedTargets = [];
         this.currentSkillId = null;
         this.isAoe = false;
+        this.currentBattleId = null;
+        this.availableBattles = [];
     }
 
     reset() {
@@ -92,6 +101,8 @@ class GameClient {
             this.reconnectAttempts = 0;
             this.ui.setConnectionStatus(true);
             this.ui.addLog('已连接到服务器', 'system');
+            // 连接后获取战斗列表
+            this.send(ClientMsgType.GET_BATTLES);
         };
 
         this.ws.onmessage = (event) => {
@@ -132,6 +143,9 @@ class GameClient {
         const { type, data } = msg;
 
         switch (type) {
+            case ServerMsgType.BATTLE_LIST:
+                this.handleBattleList(data);
+                break;
             case ServerMsgType.INIT_STATE:
                 this.handleInitState(data);
                 break;
@@ -156,8 +170,20 @@ class GameClient {
             case ServerMsgType.HEAL:
                 this.handleHeal(data);
                 break;
+            case ServerMsgType.UPDATE_EFFECTS:
+                this.handleUpdateEffects(data);
+                break;
+            case ServerMsgType.EFFECT_APPLIED:
+                this.handleEffectApplied(data);
+                break;
+            case ServerMsgType.EFFECT_REMOVED:
+                this.handleEffectRemoved(data);
+                break;
             case ServerMsgType.BATTLE_END:
                 this.handleBattleEnd(data);
+                break;
+            case ServerMsgType.RETURN_TO_MENU:
+                this.handleReturnToMenu();
                 break;
             case ServerMsgType.REQUEST_ACTION:
                 this.handleRequestAction(data);
@@ -172,6 +198,17 @@ class GameClient {
     }
 
     // ==================== 消息处理器 ====================
+
+    handleBattleList(data) {
+        this.state.availableBattles = data.battles;
+        this.ui.renderBattleList(data.battles);
+    }
+
+    handleReturnToMenu() {
+        this.state.reset();
+        this.ui.showMainMenu();
+        this.ui.addLog('返回主菜单', 'system');
+    }
 
     handleInitState(data) {
         this.state.reset();
@@ -208,6 +245,37 @@ class GameClient {
             max_mp: data.max_mp
         });
         this.ui.updateUnitCard(data.unit_id);
+    }
+
+    handleUpdateEffects(data) {
+        // 更新单位的效果列表
+        this.state.updateUnit(data.unit_id, {
+            effects: data.effects
+        });
+        this.ui.updateUnitEffects(data.unit_id);
+    }
+
+    handleEffectApplied(data) {
+        // 效果被施加时的处理（可用于动画等）
+        const unit = this.state.getUnit(data.unit_id);
+        if (unit) {
+            if (!unit.effects) unit.effects = [];
+            unit.effects.push(data.effect);
+            this.ui.updateUnitEffects(data.unit_id);
+            
+            const buffType = data.effect.is_buff ? '增益' : '减益';
+            this.ui.addLog(`✨ ${data.unit_name} 获得了 ${data.effect.name} (${buffType})`, 'effect');
+        }
+    }
+
+    handleEffectRemoved(data) {
+        // 效果移除时的处理
+        const unit = this.state.getUnit(data.unit_id);
+        if (unit && unit.effects) {
+            unit.effects = unit.effects.filter(e => e.name !== data.effect_name);
+            this.ui.updateUnitEffects(data.unit_id);
+            this.ui.addLog(`💨 ${data.unit_name} 的 ${data.effect_name} 效果消失了`, 'effect');
+        }
     }
 
     handleUnitDied(data) {
@@ -271,8 +339,18 @@ class GameClient {
 
     // ==================== 用户操作 ====================
 
-    startBattle() {
-        this.send(ClientMsgType.START_BATTLE);
+    startBattle(battleId) {
+        this.state.currentBattleId = battleId;
+        this.ui.showBattleView();
+        this.send(ClientMsgType.START_BATTLE, { battle_id: battleId });
+    }
+
+    restartBattle() {
+        this.send(ClientMsgType.RESTART, { battle_id: this.state.currentBattleId });
+    }
+
+    returnToMenu() {
+        this.send(ClientMsgType.RETURN_TO_MENU);
     }
 
     selectCategory(categoryId) {
@@ -298,7 +376,7 @@ class GameClient {
     }
 
     restart() {
-        this.send(ClientMsgType.RESTART);
+        this.restartBattle();
         this.ui.hideBattleEndModal();
     }
 }
@@ -309,6 +387,10 @@ class GameUI {
         this.client = client;
         this.elements = {
             connectionStatus: document.getElementById('connectionStatus'),
+            mainMenu: document.getElementById('mainMenu'),
+            battleList: document.getElementById('battleList'),
+            gameMain: document.getElementById('gameMain'),
+            returnMenuBtn: document.getElementById('returnMenuBtn'),
             allyUnits: document.getElementById('allyUnits'),
             enemyUnits: document.getElementById('enemyUnits'),
             turnIndicator: document.getElementById('turnIndicator'),
@@ -326,9 +408,9 @@ class GameUI {
     }
 
     bindEvents() {
-        // 开始战斗按钮
-        document.getElementById('startBattleBtn')?.addEventListener('click', () => {
-            this.client.startBattle();
+        // 返回主菜单按钮
+        document.getElementById('returnMenuBtn')?.addEventListener('click', () => {
+            this.client.returnToMenu();
         });
 
         // 重新开始按钮
@@ -336,9 +418,59 @@ class GameUI {
             this.client.restart();
         });
 
+        // 弹窗中的返回主菜单按钮
+        document.getElementById('backToMenuBtn')?.addEventListener('click', () => {
+            this.hideBattleEndModal();
+            this.client.returnToMenu();
+        });
+
         // 清空日志按钮
         document.getElementById('clearLogBtn')?.addEventListener('click', () => {
             this.elements.battleLog.innerHTML = '';
+        });
+    }
+
+    // ==================== 页面切换 ====================
+
+    showMainMenu() {
+        this.elements.mainMenu.style.display = 'flex';
+        this.elements.gameMain.style.display = 'none';
+        this.elements.returnMenuBtn.style.display = 'none';
+        // 重新获取战斗列表
+        this.client.send(ClientMsgType.GET_BATTLES);
+    }
+
+    showBattleView() {
+        this.elements.mainMenu.style.display = 'none';
+        this.elements.gameMain.style.display = 'flex';
+        this.elements.returnMenuBtn.style.display = 'block';
+        // 清空日志
+        this.elements.battleLog.innerHTML = '<p class="log-entry log-system">战斗开始...</p>';
+    }
+
+    renderBattleList(battles) {
+        if (!battles || battles.length === 0) {
+            this.elements.battleList.innerHTML = '<p class="no-battles">暂无可用战斗</p>';
+            return;
+        }
+
+        this.elements.battleList.innerHTML = battles.map(battle => `
+            <div class="battle-card" data-battle-id="${battle.id}">
+                <div class="battle-card-header">
+                    <span class="battle-icon">⚔️</span>
+                    <h3>${battle.name}</h3>
+                </div>
+                <p class="battle-description">${battle.description || '无描述'}</p>
+                <button class="btn btn-primary start-battle-btn">开始战斗</button>
+            </div>
+        `).join('');
+
+        // 绑定开始按钮事件
+        this.elements.battleList.querySelectorAll('.start-battle-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const battleId = e.target.closest('.battle-card').dataset.battleId;
+                this.client.startBattle(battleId);
+            });
         });
     }
 
@@ -381,8 +513,12 @@ class GameUI {
         const hpPercent = (unit.current_hp / unit.max_hp) * 100;
         const mpPercent = (unit.current_mp / unit.max_mp) * 100;
         
+        // 生成效果图标 HTML
+        const effectsHtml = this.renderEffectIcons(unit.effects || []);
+        
         card.innerHTML = `
             <div class="unit-name">${unit.name}</div>
+            <div class="unit-effects">${effectsHtml}</div>
             <div class="resource-bar hp-bar">
                 <div class="bar-fill" style="width: ${hpPercent}%"></div>
                 <span class="bar-text">${unit.current_hp} / ${unit.max_hp}</span>
@@ -398,6 +534,38 @@ class GameUI {
         }
         
         return card;
+    }
+
+    renderEffectIcons(effects) {
+        if (!effects || effects.length === 0) {
+            return '';
+        }
+        
+        return effects.map(effect => {
+            const buffClass = effect.is_buff ? 'buff' : 'debuff';
+            const stacksText = effect.stacks > 1 ? `×${effect.stacks}` : '';
+            const durationText = effect.duration > 0 ? effect.duration : '∞';
+            
+            return `
+                <span class="effect-icon ${buffClass}" 
+                      title="${effect.name}: ${effect.description} (${durationText}回合)">
+                    ${effect.icon || (effect.is_buff ? '⬆' : '⬇')}${stacksText}
+                </span>
+            `;
+        }).join('');
+    }
+
+    updateUnitEffects(unitId) {
+        const unit = this.client.state.getUnit(unitId);
+        if (!unit) return;
+        
+        const card = document.getElementById(`unit-${unitId}`);
+        if (!card) return;
+        
+        const effectsContainer = card.querySelector('.unit-effects');
+        if (effectsContainer) {
+            effectsContainer.innerHTML = this.renderEffectIcons(unit.effects || []);
+        }
     }
 
     updateUnitCard(unitId) {

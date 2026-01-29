@@ -1,0 +1,154 @@
+{
+  "hero": {
+    "name": "勇者",
+    "description": "勇敢的战士，攻守兼备",
+    "base_stats": {
+      "max_hp": 200,
+      "max_mp": 50,
+      "max_san": 100,
+      "atk": 20,
+      "matk": 10,
+      "def": 5,
+      "mdef": 3,
+      "spd": 12,
+      "acc": 1.2,
+      "eva": 0.1,
+      "crit": 0.2,
+      "anticrit": 0.0
+    },
+    "skill_ids": ["slash", "power_strike", "heal"]
+  },
+  "mage": {
+    "name": "法师",
+    "description": "精通魔法的智者",
+    "base_stats": {
+      "max_hp": 120,
+      "max_mp": 100,
+      "max_san": 80,
+      "atk": 5,
+      "matk": 30,
+      "def": 2,
+      "mdef": 8,
+      "spd": 10,
+      "acc": 1.0,
+      "eva": 0.05,
+      "crit": 0.3,
+      "anticrit": 0.0
+    },
+    "skill_ids": ["fireball", "heal", "fire_storm"]
+  },
+  "assassin": {
+    "name": "刺客",
+    "description": "擅长毒术的暗杀者",
+    "base_stats": {
+      "max_hp": 150,
+      "max_mp": 60,
+      "max_san": 90,
+      "atk": 25,
+      "matk": 5,
+      "def": 3,
+      "mdef": 2,
+      "spd": 18,
+      "acc": 1.3,
+      "eva": 0.2,
+      "crit": 0.35,
+      "anticrit": 0.0
+    },
+    "skill_ids": ["poison_blade", "power_strike", "vampiric_strike"]
+  },
+  "priest": {
+    "name": "牧师",
+    "description": "神圣的治疗者",
+    "base_stats": {
+      "max_hp": 130,
+      "max_mp": 120,
+      "max_san": 120,
+      "atk": 8,
+      "matk": 20,
+      "def": 4,
+      "mdef": 10,
+      "spd": 9,
+      "acc": 1.0,
+      "eva": 0.05,
+      "crit": 0.1,
+      "anticrit": 0.0
+    },
+    "skill_ids": ["heal", "regen", "shield"]
+  },
+  "berserker": {
+    "name": "狂战士",
+    "description": "以生命为代价换取力量",
+    "base_stats": {
+      "max_hp": 250,
+      "max_mp": 30,
+      "max_san": 60,
+      "atk": 35,
+      "matk": 0,
+      "def": 2,
+      "mdef": 1,
+      "spd": 14,
+      "acc": 1.1,
+      "eva": 0.0,
+      "crit": 0.25,
+      "anticrit": 0.0
+    },
+    "skill_ids": ["slash", "power_strike", "rage"]
+  },
+  "dragon": {
+    "name": "恶龙",
+    "description": "强大的古龙",
+    "base_stats": {
+      "max_hp": 600,
+      "max_mp": 999,
+      "max_san": 999,
+      "atk": 25,
+      "matk": 10,
+      "def": 8,
+      "mdef": 5,
+      "spd": 8,
+      "acc": 0.9,
+      "eva": 0.0,
+      "crit": 0.15,
+      "anticrit": 0.1
+    },
+    "skill_ids": ["fireball", "fire_storm"]
+  },
+  "goblin": {
+    "name": "哥布林",
+    "description": "狡猾的小怪物",
+    "base_stats": {
+      "max_hp": 80,
+      "max_mp": 20,
+      "max_san": 50,
+      "atk": 12,
+      "matk": 0,
+      "def": 2,
+      "mdef": 1,
+      "spd": 15,
+      "acc": 1.0,
+      "eva": 0.15,
+      "crit": 0.1,
+      "anticrit": 0.0
+    },
+    "skill_ids": ["poison_blade"]
+  },
+  "skeleton": {
+    "name": "骷髅兵",
+    "description": "不死的骨架战士",
+    "base_stats": {
+      "max_hp": 100,
+      "max_mp": 0,
+      "max_san": 999,
+      "atk": 15,
+      "matk": 0,
+      "def": 5,
+      "mdef": 0,
+      "spd": 10,
+      "acc": 0.8,
+      "eva": 0.0,
+      "crit": 0.05,
+      "anticrit": 0.0
+    },
+    "skill_ids": ["power_strike"]
+  }
+}

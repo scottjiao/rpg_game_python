@@ -100,6 +100,20 @@ from .controllers import (
     HumanCLIController,
 )
 
+# 数据加载与技能效果
+from .data_loader import (
+    DataLoader,
+    get_data_loader,
+    reload_data,
+)
+from .skill_effects import (
+    SkillEffectContext,
+    register_skill_effect,
+    get_skill_effect,
+    execute_skill_effects,
+    SKILL_EFFECT_REGISTRY,
+)
+
 __all__ = [
     # ECS Core
     "Entity",
@@ -167,4 +181,14 @@ __all__ = [
     "BaseController",
     "RandomAIController",
     "HumanCLIController",
+    # Data Loading
+    "DataLoader",
+    "get_data_loader",
+    "reload_data",
+    # Skill Effects
+    "SkillEffectContext",
+    "register_skill_effect",
+    "get_skill_effect",
+    "execute_skill_effects",
+    "SKILL_EFFECT_REGISTRY",
 ]

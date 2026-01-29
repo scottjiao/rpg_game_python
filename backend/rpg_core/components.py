@@ -4,8 +4,11 @@ components.py - ECS 组件定义
 所有组件都是纯数据容器，不包含任何业务逻辑。
 组件可以动态地附加到实体上，实现"组合优于继承"的设计。
 """
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from .effects import IEffect
 
 
 class Component(BaseModel):
@@ -14,6 +17,8 @@ class Component(BaseModel):
     class Config:
         # 允许通过别名访问字段
         populate_by_name = True
+        # 允许任意类型（用于存储 Effect 对象）
+        arbitrary_types_allowed = True
 
 
 # ============================================================
@@ -106,7 +111,69 @@ class EffectsComponent(Component):
     效果容器组件：存储当前生效的所有 Buff/Debuff
     实际的 Effect 对象存储在这里，由 EffectSystem 处理
     """
-    effects: List[Any] = []  # List[Effect]，使用 Any 避免循环导入
+    effects: List[Any] = []  # List[IEffect]，运行时使用 IEffect 协议检查
+    
+    def __init__(self, **data):
+        super().__init__(**data)
+        # 确保每个实例有独立的 effects 列表
+        if "effects" not in data:
+            self.effects = []
+    
+    def add_effect(self, effect: "IEffect") -> None:
+        """添加效果，处理叠加逻辑"""
+        # 检查是否已有同类效果
+        for existing in self.effects:
+            if type(existing) == type(effect):
+                if existing.stackable and existing.current_stacks < existing.max_stacks:
+                    existing.current_stacks += 1
+                    existing.duration = max(existing.duration, effect.duration)
+                    return
+                elif not existing.stackable:
+                    # 刷新持续时间
+                    existing.duration = max(existing.duration, effect.duration)
+                    return
+        
+        # 没有同类效果，直接添加
+        self.effects.append(effect)
+    
+    def remove_effect(self, effect: "IEffect") -> None:
+        """移除效果"""
+        if effect in self.effects:
+            self.effects.remove(effect)
+    
+    def remove_effect_by_name(self, effect_name: str) -> Optional["IEffect"]:
+        """按名称移除效果，返回被移除的效果"""
+        for i, e in enumerate(self.effects):
+            if e.name == effect_name:
+                return self.effects.pop(i)
+        return None
+    
+    def get_effects_by_type(self, effect_type: type) -> List["IEffect"]:
+        """按类型获取效果"""
+        return [e for e in self.effects if isinstance(e, effect_type)]
+    
+    def has_effect(self, effect_name: str) -> bool:
+        """检查是否有指定名称的效果"""
+        return any(e.name == effect_name for e in self.effects)
+    
+    def get_effect(self, effect_name: str) -> Optional["IEffect"]:
+        """获取指定名称的效果"""
+        for e in self.effects:
+            if e.name == effect_name:
+                return e
+        return None
+    
+    def clear_expired(self) -> List["IEffect"]:
+        """清除已过期的效果，返回被清除的效果列表"""
+        expired = [e for e in self.effects if e.is_expired()]
+        self.effects = [e for e in self.effects if not e.is_expired()]
+        return expired
+    
+    def tick_all(self) -> List["IEffect"]:
+        """所有效果回合流逝，返回过期的效果"""
+        for effect in self.effects:
+            effect.tick()
+        return self.clear_expired()
 
 
 # ============================================================

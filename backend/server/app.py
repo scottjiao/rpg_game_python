@@ -12,7 +12,8 @@ from fastapi.responses import FileResponse
 import os
 
 from .game_bridge import GameBridge
-from .protocol import ClientMsgType
+from .protocol import ClientMsgType, ServerMsgType
+from rpg_core.data_loader import get_data_loader
 
 app = FastAPI(title="RPG Battle Server")
 
@@ -55,16 +56,41 @@ async def websocket_endpoint(websocket: WebSocket):
                 continue
             
             # 处理不同类型的消息
-            if msg_type == ClientMsgType.START_BATTLE:
+            if msg_type == ClientMsgType.GET_BATTLES:
+                # 获取可用战斗列表
+                loader = get_data_loader()
+                battles = []
+                for battle_id, battle_data in loader.get_all_battles().items():
+                    battles.append({
+                        "id": battle_id,
+                        "name": battle_data.get("name", battle_id),
+                        "description": battle_data.get("description", "")
+                    })
+                await send_message({
+                    "type": ServerMsgType.BATTLE_LIST.value,
+                    "data": {"battles": battles}
+                })
+            
+            elif msg_type == ClientMsgType.START_BATTLE:
                 # 初始化并开始战斗
-                await game.initialize_battle()
+                battle_id = msg_data.get("battle_id", "tutorial")
+                await game.initialize_battle(battle_id)
                 # 在后台运行战斗循环
                 asyncio.create_task(game.run_battle_loop())
             
             elif msg_type == ClientMsgType.RESTART:
-                # 重新开始战斗
-                await game.initialize_battle()
+                # 重新开始战斗（使用当前战斗配置）
+                battle_id = msg_data.get("battle_id", "tutorial")
+                await game.initialize_battle(battle_id)
                 asyncio.create_task(game.run_battle_loop())
+            
+            elif msg_type == ClientMsgType.RETURN_TO_MENU:
+                # 返回主菜单
+                game.stop_battle()
+                await send_message({
+                    "type": ServerMsgType.RETURN_TO_MENU.value,
+                    "data": {}
+                })
             
             else:
                 # 其他消息转发给游戏桥接器

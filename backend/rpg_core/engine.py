@@ -15,13 +15,15 @@ ECS 重构：
 from typing import List, Dict, Optional
 from .models import BattleContext, SkillTemplate, CombatAction
 from .entity import CombatEntity
-from .components import ResourceComponent, SkillsComponent, StatsComponent
+from .components import ResourceComponent, SkillsComponent, StatsComponent, EffectsComponent
 from .events import EventBus, TurnEvent, DamageEvent, LogEvent, BattleEndEvent, EventType
 from .logic import DamageCalculator
 from .enums import ActionCategory
 from .events import BaseEvent
 from .systems import EffectSystem, CooldownSystem
 from .queries import StatQuery, EffectQuery
+from .skill_effects import SkillEffectContext, execute_skill_effects
+from .data_loader import get_data_loader
 
 
 class BattleEngine:
@@ -207,6 +209,8 @@ class BattleEngine:
                 CooldownSystem.set_cooldown(actor, skill_tmpl.id, skill_tmpl.cooldown)
 
         # 遍历目标进行结算 (skill_tmpl=None 时 DamageCalculator 视为普攻)
+        total_damage_dealt = 0  # 记录总伤害，用于吸血等效果
+        
         for tid in action.target_ids:
             target = context.get_entity(tid)
             if not target or target.is_dead:
@@ -240,6 +244,9 @@ class BattleEngine:
                 if res.current_hp == 0:
                     target.is_dead = True
                 
+                # 累计造成的伤害
+                total_damage_dealt += result["damage"]
+                
                 self.bus.publish(DamageEvent(
                     source_id=actor.id, 
                     target_id=target.id,
@@ -249,3 +256,57 @@ class BattleEngine:
                 ))
                 if target.is_dead:
                     self.bus.publish(BaseEvent(type=EventType.UNIT_DEATH))
+        
+        # 执行技能附加效果（Buff/Debuff）
+        if skill_tmpl:
+            self._apply_skill_effects(actor, action.target_ids, context, skill_tmpl, total_damage_dealt)
+    
+    def _apply_skill_effects(
+        self, 
+        actor: CombatEntity, 
+        target_ids: list, 
+        context: BattleContext,
+        skill_tmpl: SkillTemplate,
+        damage_dealt: int = 0
+    ):
+        """
+        应用技能的附加效果
+        
+        从 DataLoader 获取效果配置，通过 skill_effects 系统执行
+        
+        Args:
+            actor: 施放者
+            target_ids: 目标 ID 列表
+            context: 战斗上下文
+            skill_tmpl: 技能模板
+            damage_dealt: 本次技能造成的总伤害（用于吸血等效果）
+        """
+        loader = get_data_loader()
+        effect_ids, effect_params = loader.get_skill_effects(skill_tmpl.id)
+        
+        if not effect_ids:
+            return
+        
+        # 获取目标实体列表
+        targets = []
+        for tid in target_ids:
+            target = context.get_entity(tid)
+            if target and not target.is_dead:
+                targets.append(target)
+        
+        # 如果没有目标，可能是自身技能
+        if not targets:
+            targets = [actor]
+        
+        # 创建效果上下文
+        effect_ctx = SkillEffectContext(
+            source=actor,
+            target=targets[0] if targets else actor,
+            targets=targets,
+            damage_dealt=damage_dealt,
+            params={},
+            bus=self.bus
+        )
+        
+        # 执行所有效果
+        execute_skill_effects(effect_ids, effect_params, effect_ctx)
