@@ -3,11 +3,14 @@ logic.py - 战斗逻辑核心
 
 包含：
 - ActionGenerator: 三层查询 API，供 Controller 分步获取可行动作
-- DamageCalculator: 伤害计算
+- DamageCalculator: 伤害计算（使用 ECS 查询系统）
 """
 import random
 from typing import List, Dict, Optional
-from .models import CombatEntity, CombatAction, BattleContext, SkillTemplate
+from .models import CombatAction, BattleContext, SkillTemplate
+from .entity import CombatEntity
+from .components import ResourceComponent, SkillsComponent
+from .queries import StatQuery, EffectQuery
 from .enums import ActionCategory, TargetType, DamageType, SkillCategory
 
 
@@ -39,9 +42,11 @@ class ActionGenerator:
         if context.get_alive_enemies():
             categories.append(ActionCategory.ATTACK)
         
-        # 法术：需要有可用的法术类技能
+        # 法术：需要有可用的法术类技能，且未被沉默
         if self._has_usable_skills(actor, SkillCategory.MAGIC):
-            categories.append(ActionCategory.MAGIC)
+            # ECS: 检查沉默状态
+            if not EffectQuery.is_silenced(actor):
+                categories.append(ActionCategory.MAGIC)
         
         # 防御：总是可用
         categories.append(ActionCategory.DEFEND)
@@ -75,12 +80,23 @@ class ActionGenerator:
     
     def _can_use_skill(self, actor: CombatEntity, skill: SkillTemplate) -> bool:
         """检查技能是否可用（消耗足够、冷却完毕）"""
-        if actor.current_mp < skill.cost_mp:
+        # ECS: 使用组件查询
+        res = actor.get(ResourceComponent)
+        skills_comp = actor.get(SkillsComponent)
+        
+        if not res:
             return False
-        if actor.current_san < skill.cost_san:
+        
+        if res.current_mp < skill.cost_mp:
             return False
-        if actor.cooldowns.get(skill.id, 0) > 0:
+        if res.current_san < skill.cost_san:
             return False
+        
+        # 检查冷却
+        if skills_comp:
+            if skills_comp.cooldowns.get(skill.id, 0) > 0:
+                return False
+        
         return True
     
     # ========== Step 2: 获取该大类下可用的技能列表 ==========
@@ -224,7 +240,11 @@ class ActionGenerator:
 
 
 class DamageCalculator:
-    """伤害计算核心"""
+    """
+    伤害计算核心
+    
+    使用 ECS 的 StatQuery 获取经过 Buff 修正后的属性值。
+    """
     
     @staticmethod
     def calculate(
@@ -253,8 +273,12 @@ class DamageCalculator:
             damage_type = skill.damage_type
             fixed_value = skill.fixed_value
         
+        # ECS: 使用 StatQuery 获取修正后的属性
+        attacker_acc = StatQuery.get(attacker, "acc")
+        target_eva = StatQuery.get(target, "eva")
+        
         # 1. 命中判定
-        hit_rate = (attacker.stats.acc - target.stats.eva) + 0.95
+        hit_rate = (attacker_acc - target_eva) + 0.95
         if random.random() > hit_rate:
             return {
                 "hit": False, 
@@ -264,25 +288,26 @@ class DamageCalculator:
                 "damage_type": damage_type
             }
         
-        # 2. 基础伤害计算
+        # 2. 基础伤害计算（使用修正后的属性）
         base = 0.0
         defense = 0
         
         if damage_type == DamageType.PHYSICAL:
-            base = attacker.stats.atk * power_coef
-            defense = target.stats.def_
+            base = StatQuery.get(attacker, "atk") * power_coef
+            defense = StatQuery.get_int(target, "def_")
         
         elif damage_type == DamageType.MAGICAL:
-            base = attacker.stats.matk * power_coef
-            defense = target.stats.mdef
+            base = StatQuery.get(attacker, "matk") * power_coef
+            defense = StatQuery.get_int(target, "mdef")
         
         elif damage_type == DamageType.MENTAL:
-            base = attacker.stats.max_san * 0.1 * power_coef
-            defense = int(target.stats.mdef * 0.5)
+            base = StatQuery.get(attacker, "max_san") * 0.1 * power_coef
+            defense = int(StatQuery.get(target, "mdef") * 0.5)
         
         elif damage_type == DamageType.HEAL:
-            heal = attacker.stats.matk * power_coef + fixed_value
-            is_crit = random.random() < attacker.stats.crit
+            heal = StatQuery.get(attacker, "matk") * power_coef + fixed_value
+            attacker_crit = StatQuery.get(attacker, "crit")
+            is_crit = random.random() < attacker_crit
             if is_crit:
                 heal *= 1.5
             return {
@@ -294,7 +319,7 @@ class DamageCalculator:
             }
         
         elif damage_type == DamageType.TRUE:
-            base = attacker.stats.atk * power_coef
+            base = StatQuery.get(attacker, "atk") * power_coef
             defense = 0
         
         # 加上固定伤害
@@ -303,13 +328,19 @@ class DamageCalculator:
         # 3. 减伤 (简单除法公式)
         dmg = base / (1 + defense * 0.05)
         
-        # 4. 暴击判定
-        crit_chance = attacker.stats.crit - target.stats.anticrit
+        # 4. 暴击判定（使用修正后的属性）
+        attacker_crit = StatQuery.get(attacker, "crit")
+        target_anticrit = StatQuery.get(target, "anticrit")
+        crit_chance = attacker_crit - target_anticrit
         is_crit = random.random() < crit_chance
         if is_crit:
             dmg *= 1.5
         
-        # 5. 浮动 (±10%)
+        # 5. 应用伤害修正（来自 Effect）
+        dmg *= StatQuery.get_damage_dealt_modifier(attacker)
+        dmg *= StatQuery.get_damage_received_modifier(target)
+        
+        # 6. 浮动 (±10%)
         dmg *= random.uniform(0.9, 1.1)
         
         return {

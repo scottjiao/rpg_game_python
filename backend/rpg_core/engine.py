@@ -7,14 +7,21 @@ BattleEngine 是一个纯粹的状态机，只负责战斗逻辑计算，不负�
 2. 获取玩家/AI 的输入
 3. 将输入传递给引擎执行
 
-这样无论是同步 CLI 还是异步 WebSocket，都可以复用同一套战斗逻辑。
+ECS 重构：
+- 使用 EffectSystem 处理 Buff/Debuff 的触发和清理
+- 使用 CooldownSystem 处理技能冷却
+- 使用 StatQuery 获取修正后的属性
 """
 from typing import List, Dict, Optional
-from .models import CombatEntity, BattleContext, SkillTemplate, CombatAction
+from .models import BattleContext, SkillTemplate, CombatAction
+from .entity import CombatEntity
+from .components import ResourceComponent, SkillsComponent, StatsComponent
 from .events import EventBus, TurnEvent, DamageEvent, LogEvent, BattleEndEvent, EventType
 from .logic import DamageCalculator
 from .enums import ActionCategory
 from .events import BaseEvent
+from .systems import EffectSystem, CooldownSystem
+from .queries import StatQuery, EffectQuery
 
 
 class BattleEngine:
@@ -59,12 +66,15 @@ class BattleEngine:
         """
         计算本回合的行动顺序
         
+        使用 StatQuery 获取修正后的速度值
+        
         Returns:
             按速度降序排列的存活单位列表
         """
         all_units = self.allies + self.enemies
         active_units = [u for u in all_units if not u.is_dead]
-        active_units.sort(key=lambda u: u.stats.spd, reverse=True)
+        # ECS: 使用 StatQuery 获取修正后的速度
+        active_units.sort(key=lambda u: StatQuery.get(u, "spd"), reverse=True)
         return active_units
 
     def increment_turn(self):
@@ -77,8 +87,8 @@ class BattleEngine:
         
         执行以下操作：
         1. 发布回合开始事件
-        2. 减少技能冷却
-        3. TODO: 结算 DoT/Buff
+        2. 减少技能冷却（使用 CooldownSystem）
+        3. 触发回合开始的 Effect（使用 EffectSystem）
         4. 构建并返回战斗上下文
         
         Args:
@@ -90,26 +100,26 @@ class BattleEngine:
         # 1. 发布回合开始事件
         self.bus.publish(TurnEvent(
             turn_number=self.turn_count,
-            actor_id=actor.instance_id,
+            actor_id=actor.id,
             actor_name=actor.name
         ))
 
-        # 2. 减少冷却
-        for sk_id in list(actor.cooldowns.keys()):
-            if actor.cooldowns[sk_id] > 0:
-                actor.cooldowns[sk_id] -= 1
+        # 2. ECS: 使用 CooldownSystem 减少冷却
+        CooldownSystem.tick_cooldowns(actor)
 
-        # 3. TODO: 结算 DoT/Buff（可在此处扩展）
+        # 3. ECS: 触发回合开始的 Effect（DoT、Buff 减少等）
+        context = {"bus": self.bus}
+        EffectSystem.tick_effects(actor, "TURN_START", context)
 
         # 4. 构建上下文
-        context = BattleContext(
+        battle_context = BattleContext(
             turn_number=self.turn_count,
             current_actor=actor,
             allies=self.allies if actor in self.allies else self.enemies,
             enemies=self.enemies if actor in self.allies else self.allies
         )
 
-        return context
+        return battle_context
 
     def resolve_action(self, actor: CombatEntity, action: CombatAction, context: BattleContext):
         """
@@ -159,6 +169,7 @@ class BattleEngine:
         执行动作的内部实现
         
         处理伤害计算、资源消耗、冷却设置等。
+        使用 ECS 组件和系统进行操作。
         """
         # 获取技能模板
         skill_tmpl = self.skill_registry.get(action.skill_id) if action.skill_id else None
@@ -175,16 +186,25 @@ class BattleEngine:
 
         # 防御处理
         if action.category == ActionCategory.DEFEND:
-            actor.current_mp = min(actor.stats.max_mp, actor.current_mp + 5)
+            # ECS: 通过组件恢复 MP
+            res = actor.get(ResourceComponent)
+            stats = actor.get(StatsComponent)
+            if res and stats:
+                res.current_mp = min(stats.max_mp, res.current_mp + 5)
             self.bus.publish(LogEvent(message=f"{actor.name} 进行防御，恢复了少量体力。"))
             return
 
         # 如果有技能，扣消耗、设冷却
         if skill_tmpl:
-            actor.current_mp -= skill_tmpl.cost_mp
-            actor.current_san -= skill_tmpl.cost_san
+            # ECS: 通过组件扣消耗
+            res = actor.get(ResourceComponent)
+            if res:
+                res.current_mp -= skill_tmpl.cost_mp
+                res.current_san -= skill_tmpl.cost_san
+            
+            # ECS: 使用 CooldownSystem 设置冷却
             if skill_tmpl.cooldown > 0:
-                actor.cooldowns[skill_tmpl.id] = skill_tmpl.cooldown
+                CooldownSystem.set_cooldown(actor, skill_tmpl.id, skill_tmpl.cooldown)
 
         # 遍历目标进行结算 (skill_tmpl=None 时 DamageCalculator 视为普攻)
         for tid in action.target_ids:
@@ -198,20 +218,34 @@ class BattleEngine:
                 self.bus.publish(LogEvent(message=f"MISS! {actor.name} 未命中 {target.name}"))
                 continue
 
+            # ECS: 通过组件处理伤害/治疗
+            res = target.get(ResourceComponent)
+            stats = target.get(StatsComponent)
+            
+            if not res or not stats:
+                continue
+
             if result["type"] == "HEAL":
-                target.current_hp = min(target.stats.max_hp, target.current_hp + result["damage"])
+                res.current_hp = min(stats.max_hp, res.current_hp + result["damage"])
                 self.bus.publish(DamageEvent(
-                    type=EventType.HEAL_DEALT, source_id=actor.instance_id, target_id=target.instance_id,
-                    amount=result["damage"], is_crit=result["is_crit"], damage_type=result["damage_type"]
+                    type=EventType.HEAL_DEALT, 
+                    source_id=actor.id, 
+                    target_id=target.id,
+                    amount=result["damage"], 
+                    is_crit=result["is_crit"], 
+                    damage_type=result["damage_type"]
                 ))
             else:
-                target.current_hp = max(0, target.current_hp - result["damage"])
-                if target.current_hp == 0:
+                res.current_hp = max(0, res.current_hp - result["damage"])
+                if res.current_hp == 0:
                     target.is_dead = True
                 
                 self.bus.publish(DamageEvent(
-                    source_id=actor.instance_id, target_id=target.instance_id,
-                    amount=result["damage"], is_crit=result["is_crit"], damage_type=result["damage_type"]
+                    source_id=actor.id, 
+                    target_id=target.id,
+                    amount=result["damage"], 
+                    is_crit=result["is_crit"], 
+                    damage_type=result["damage_type"]
                 ))
                 if target.is_dead:
                     self.bus.publish(BaseEvent(type=EventType.UNIT_DEATH))

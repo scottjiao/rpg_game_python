@@ -1,13 +1,31 @@
+"""
+models.py - 数据模型定义
+
+包含：
+- BattleStats: 战斗属性（兼容层，映射到 StatsComponent）
+- SkillTemplate: 技能模板
+- CharacterTemplate: 角色模板
+- CombatEntity: 战斗实体（ECS 重构版，从 entity.py 导入）
+- BattleContext: 战斗上下文
+- CombatAction: 战斗行动指令
+"""
 import uuid
 from typing import List, Dict, Optional
 from pydantic import BaseModel, Field
 from .enums import ActionCategory, TargetType, DamageType, SkillCategory
+
+# 导入 ECS 组件和实体
+from .entity import CombatEntity  # 重新导出，保持向后兼容
+from .components import StatsComponent
 
 # --- 1. 核心属性 Stats ---
 
 class BattleStats(BaseModel):
     """
     战斗属性集。支持通过 + 运算符进行叠加。
+    
+    注意：这是一个兼容层，用于模板定义。
+    实际运行时，属性存储在 StatsComponent 中。
     """
     # 资源上限
     max_hp: int = 0
@@ -41,6 +59,23 @@ class BattleStats(BaseModel):
             v2 = getattr(other, field)
             data[field] = v1 + v2
         return BattleStats(**data)
+    
+    def to_stats_component(self) -> StatsComponent:
+        """转换为 ECS StatsComponent"""
+        return StatsComponent(
+            max_hp=self.max_hp,
+            max_mp=self.max_mp,
+            max_san=self.max_san,
+            atk=self.atk,
+            matk=self.matk,
+            def_=self.def_,
+            mdef=self.mdef,
+            spd=self.spd,
+            acc=self.acc,
+            eva=self.eva,
+            crit=self.crit,
+            anticrit=self.anticrit,
+        )
 
 
 # --- 2. 静态模板 Templates (JSON映射) ---
@@ -61,6 +96,7 @@ class SkillTemplate(BaseModel):
 
 
 class CharacterTemplate(BaseModel):
+    """角色模板：用于创建 CombatEntity"""
     id: str
     name: str
     base_stats: BattleStats
@@ -68,37 +104,8 @@ class CharacterTemplate(BaseModel):
 
 
 # --- 3. 运行时实体 Runtime Entities ---
-
-class CombatEntity(BaseModel):
-    """战场上的活体对象。"""
-    instance_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    template_id: str
-    name: str
-    
-    # 动态状态
-    current_hp: int
-    current_mp: int
-    current_san: int
-    is_dead: bool = False
-    
-    # 当前属性 (Base + Buffs + Gear)
-    stats: BattleStats
-    
-    # 技能与冷却
-    known_skill_ids: List[str] = []
-    cooldowns: Dict[str, int] = {}  # skill_id -> turns_remaining
-
-    @classmethod
-    def create(cls, template: CharacterTemplate) -> "CombatEntity":
-        return cls(
-            template_id=template.id,
-            name=template.name,
-            current_hp=template.base_stats.max_hp,
-            current_mp=template.base_stats.max_mp,
-            current_san=template.base_stats.max_san,
-            stats=template.base_stats.model_copy(),
-            known_skill_ids=template.skill_ids
-        )
+# CombatEntity 现在从 entity.py 导入（ECS 架构）
+# 这里保留类型引用以保持向后兼容
 
 
 class BattleContext(BaseModel):

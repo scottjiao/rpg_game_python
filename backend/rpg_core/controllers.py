@@ -9,7 +9,9 @@ controllers.py - 战斗控制器
 import random
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional
-from .models import BattleContext, CombatAction, SkillTemplate, CombatEntity
+from .models import BattleContext, CombatAction, SkillTemplate
+from .entity import CombatEntity
+from .components import ResourceComponent, StatsComponent, SkillsComponent
 from .logic import ActionGenerator
 from .enums import ActionCategory, SkillCategory
 
@@ -190,7 +192,13 @@ class HumanCLIController(BaseController):
             print(f"\n【第三步】选择 {skill_name} 的目标:")
             print("  0. ← 返回")
             for i, t in enumerate(targets, 1):
-                hp_str = f"HP {t.current_hp}/{t.stats.max_hp}"
+                # ECS: 通过组件获取属性
+                res = t.get(ResourceComponent)
+                stats = t.get(StatsComponent)
+                if res and stats:
+                    hp_str = f"HP {res.current_hp}/{stats.max_hp}"
+                else:
+                    hp_str = "HP ???"
                 print(f"  {i}. {t.name} ({hp_str})")
             
             while True:
@@ -207,10 +215,15 @@ class HumanCLIController(BaseController):
     # ==================== 辅助方法 ====================
     def _print_header(self, actor: CombatEntity, context: BattleContext):
         """打印回合头部信息"""
+        # ECS: 通过组件获取属性
+        res = actor.get(ResourceComponent)
+        stats = actor.get(StatsComponent)
+        
         print("\n" + "=" * 50)
         print(f"【{actor.name} 的回合】")
-        print(f"HP: {actor.current_hp}/{actor.stats.max_hp}  "
-              f"MP: {actor.current_mp}/{actor.stats.max_mp}")
+        if res and stats:
+            print(f"HP: {res.current_hp}/{stats.max_hp}  "
+                  f"MP: {res.current_mp}/{stats.max_mp}")
         print("-" * 50)
         
         # 我方状态
@@ -226,7 +239,12 @@ class HumanCLIController(BaseController):
     def _format_unit_brief(self, u: CombatEntity) -> str:
         if u.is_dead:
             return f"{u.name}(DEAD)"
-        return f"{u.name}({u.current_hp}/{u.stats.max_hp})"
+        # ECS: 通过组件获取属性
+        res = u.get(ResourceComponent)
+        stats = u.get(StatsComponent)
+        if res and stats:
+            return f"{u.name}({res.current_hp}/{stats.max_hp})"
+        return f"{u.name}(???)"
     
     def _format_cost(self, skill: SkillTemplate) -> str:
         parts = []
@@ -237,9 +255,12 @@ class HumanCLIController(BaseController):
         return f"[{' '.join(parts)}]" if parts else ""
     
     def _format_cd(self, actor: CombatEntity, skill: SkillTemplate) -> str:
-        cd = actor.cooldowns.get(skill.id, 0)
-        if cd > 0:
-            return f" (CD:{cd})"
+        # ECS: 通过组件获取冷却
+        skills_comp = actor.get(SkillsComponent)
+        if skills_comp:
+            cd = skills_comp.cooldowns.get(skill.id, 0)
+            if cd > 0:
+                return f" (CD:{cd})"
         return ""
     
     @staticmethod

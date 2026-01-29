@@ -10,15 +10,22 @@ game_bridge.py - 游戏桥接器
 - BattleEngine 是纯状态机，不涉及任何 IO
 - GameBridge 负责异步驱动、网络通信
 - 战斗规则只在 BattleEngine 中定义一次
+
+ECS 重构：
+- 使用 Entity + Component 架构
+- 通过组件查询获取属性
 """
 import asyncio
 from typing import Dict, List, Callable, Awaitable, Optional, Any
 
 from rpg_core.enums import TargetType, DamageType, EventType, SkillCategory
-from rpg_core.models import CharacterTemplate, SkillTemplate, CombatEntity, BattleStats
+from rpg_core.models import CharacterTemplate, SkillTemplate, BattleStats
+from rpg_core.entity import CombatEntity
+from rpg_core.components import StatsComponent, ResourceComponent, TeamComponent
 from rpg_core.events import EventBus, DamageEvent, LogEvent, TurnEvent, BattleEndEvent, BaseEvent
 from rpg_core.controllers import RandomAIController, BaseController
 from rpg_core.engine import BattleEngine
+from rpg_core.queries import StatQuery
 
 from .protocol import (
     ServerMsgType, ClientMsgType,
@@ -98,6 +105,10 @@ class GameBridge:
         target = self.entities_map.get(event.target_id)
         source = self.entities_map.get(event.source_id)
         
+        # ECS: 通过组件获取属性
+        target_res = target.get(ResourceComponent) if target else None
+        target_stats = target.get(StatsComponent) if target else None
+        
         asyncio.create_task(self.send({
             "type": ServerMsgType.DAMAGE.value,
             "data": DamageData(
@@ -108,19 +119,19 @@ class GameBridge:
                 amount=event.amount,
                 is_crit=event.is_crit,
                 damage_type=event.damage_type,
-                remaining_hp=target.current_hp if target else 0,
-                max_hp=target.stats.max_hp if target else 0
+                remaining_hp=target_res.current_hp if target_res else 0,
+                max_hp=target_stats.max_hp if target_stats else 0
             ).model_dump()
         }))
         
         # 同时发送 HP 更新
-        if target:
+        if target and target_res and target_stats:
             asyncio.create_task(self.send({
                 "type": ServerMsgType.UPDATE_HP.value,
                 "data": {
-                    "unit_id": target.instance_id,
-                    "current_hp": target.current_hp,
-                    "max_hp": target.stats.max_hp
+                    "unit_id": target.id,
+                    "current_hp": target_res.current_hp,
+                    "max_hp": target_stats.max_hp
                 }
             }))
     
@@ -128,6 +139,10 @@ class GameBridge:
         """处理治疗事件"""
         target = self.entities_map.get(event.target_id)
         source = self.entities_map.get(event.source_id)
+        
+        # ECS: 通过组件获取属性
+        target_res = target.get(ResourceComponent) if target else None
+        target_stats = target.get(StatsComponent) if target else None
         
         asyncio.create_task(self.send({
             "type": ServerMsgType.HEAL.value,
@@ -137,19 +152,19 @@ class GameBridge:
                 target_id=event.target_id,
                 target_name=target.name if target else "???",
                 amount=event.amount,
-                remaining_hp=target.current_hp if target else 0,
-                max_hp=target.stats.max_hp if target else 0
+                remaining_hp=target_res.current_hp if target_res else 0,
+                max_hp=target_stats.max_hp if target_stats else 0
             ).model_dump()
         }))
         
         # 同时发送 HP 更新
-        if target:
+        if target and target_res and target_stats:
             asyncio.create_task(self.send({
                 "type": ServerMsgType.UPDATE_HP.value,
                 "data": {
-                    "unit_id": target.instance_id,
-                    "current_hp": target.current_hp,
-                    "max_hp": target.stats.max_hp
+                    "unit_id": target.id,
+                    "current_hp": target_res.current_hp,
+                    "max_hp": target_stats.max_hp
                 }
             }))
     
@@ -172,7 +187,7 @@ class GameBridge:
                 asyncio.create_task(self.send({
                     "type": ServerMsgType.UNIT_DIED.value,
                     "data": {
-                        "unit_id": entity.instance_id,
+                        "unit_id": entity.id,
                         "unit_name": entity.name
                     }
                 }))
@@ -243,10 +258,15 @@ class GameBridge:
         """初始化战斗"""
         hero_tmpl, mage_tmpl, boss_tmpl = self._create_mock_data()
         
-        # 创建实体
+        # ECS: 使用 CombatEntity.create() 创建实体
         hero = CombatEntity.create(hero_tmpl)
+        hero.add(TeamComponent(team="ally"))
+        
         mage = CombatEntity.create(mage_tmpl)
+        mage.add(TeamComponent(team="ally"))
+        
         boss = CombatEntity.create(boss_tmpl)
+        boss.add(TeamComponent(team="enemy"))
         
         allies = [hero, mage]
         enemies = [boss]
@@ -258,46 +278,49 @@ class GameBridge:
         # 创建控制器（由 GameBridge 管理）
         # 玩家角色使用 WebSocket 控制器
         for ally in allies:
-            ws_ctrl = WebSocketController(self.skill_registry, self.send, ally.instance_id)
-            self.controllers[ally.instance_id] = ws_ctrl
-            self.ws_controllers[ally.instance_id] = ws_ctrl
+            ws_ctrl = WebSocketController(self.skill_registry, self.send, ally.id)
+            self.controllers[ally.id] = ws_ctrl
+            self.ws_controllers[ally.id] = ws_ctrl
         
         # 敌人使用 AI 控制器
         for enemy in enemies:
-            self.controllers[enemy.instance_id] = RandomAIController(self.skill_registry)
+            self.controllers[enemy.id] = RandomAIController(self.skill_registry)
         
         # 发送初始状态
         await self._send_init_state()
     
     async def _send_init_state(self):
         """发送初始状态给前端"""
-        allies_info = [
-            UnitInfo(
-                id=e.instance_id,
+        # ECS: 通过组件获取属性
+        allies_info = []
+        for e in self.allies:
+            res = e.get(ResourceComponent)
+            stats = e.get(StatsComponent)
+            allies_info.append(UnitInfo(
+                id=e.id,
                 name=e.name,
-                current_hp=e.current_hp,
-                max_hp=e.stats.max_hp,
-                current_mp=e.current_mp,
-                max_mp=e.stats.max_mp,
+                current_hp=res.current_hp if res else 0,
+                max_hp=stats.max_hp if stats else 0,
+                current_mp=res.current_mp if res else 0,
+                max_mp=stats.max_mp if stats else 0,
                 is_dead=e.is_dead,
                 team="ally"
-            )
-            for e in self.allies
-        ]
+            ))
         
-        enemies_info = [
-            UnitInfo(
-                id=e.instance_id,
+        enemies_info = []
+        for e in self.enemies:
+            res = e.get(ResourceComponent)
+            stats = e.get(StatsComponent)
+            enemies_info.append(UnitInfo(
+                id=e.id,
                 name=e.name,
-                current_hp=e.current_hp,
-                max_hp=e.stats.max_hp,
-                current_mp=e.current_mp,
-                max_mp=e.stats.max_mp,
+                current_hp=res.current_hp if res else 0,
+                max_hp=stats.max_hp if stats else 0,
+                current_mp=res.current_mp if res else 0,
+                max_mp=stats.max_mp if stats else 0,
                 is_dead=e.is_dead,
                 team="enemy"
-            )
-            for e in self.enemies
-        ]
+            ))
         
         await self.send({
             "type": ServerMsgType.INIT_STATE.value,
@@ -346,7 +369,8 @@ class GameBridge:
                 context = self.engine.start_turn(unit)
                 
                 # 2. 获取输入（异步等待！）
-                controller = self.controllers.get(unit.instance_id)
+                # ECS: 使用 entity.id 作为控制器 key
+                controller = self.controllers.get(unit.id)
                 if not controller:
                     continue
                 
@@ -372,12 +396,16 @@ class GameBridge:
     
     async def _send_mp_update(self, unit: CombatEntity):
         """发送 MP 更新给前端"""
+        # ECS: 通过组件获取属性
+        res = unit.get(ResourceComponent)
+        stats = unit.get(StatsComponent)
+        
         await self.send({
             "type": ServerMsgType.UPDATE_MP.value,
             "data": {
-                "unit_id": unit.instance_id,
-                "current_mp": unit.current_mp,
-                "max_mp": unit.stats.max_mp
+                "unit_id": unit.id,
+                "current_mp": res.current_mp if res else 0,
+                "max_mp": stats.max_mp if stats else 0
             }
         })
     
@@ -390,6 +418,7 @@ class GameBridge:
         # 将消息路由到对应的 WebSocket 控制器
         if msg_type in (ClientMsgType.SELECT_CATEGORY, ClientMsgType.SELECT_SKILL, ClientMsgType.SELECT_TARGET):
             if self.current_actor:
-                ctrl = self.ws_controllers.get(self.current_actor.instance_id)
+                # ECS: 使用 entity.id 作为控制器 key
+                ctrl = self.ws_controllers.get(self.current_actor.id)
                 if ctrl:
                     ctrl.receive_client_message(msg_type, data)
