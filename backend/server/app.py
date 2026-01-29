@@ -10,6 +10,10 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
+import mimetypes
+
+# 确保 .js 文件返回正确的 MIME 类型（ES Module 需要）
+mimetypes.add_type("application/javascript", ".js")
 
 from .game_bridge import GameBridge
 from .protocol import ClientMsgType, ServerMsgType
